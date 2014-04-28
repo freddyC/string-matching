@@ -8,6 +8,7 @@
 *.so
 *.dylib
 *.dll
+*.txt
 
 # Compiled Static libraries
 *.lai
@@ -19,3 +20,6 @@
 *.exe
 *.out
 *.app
+
+string-matching
+string-matching.dSYM/
