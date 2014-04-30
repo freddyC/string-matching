@@ -7,16 +7,21 @@
 #include <iostream>
 #include <fstream>
 #include <random>
+#include <thread>
+#include <cmath>
+#include <mutex>
 
+std::mutex result_mutex;
 typedef std::map< std::string, std::map <std::string, int> > nextWordCount;
 typedef std::map< std::string, std::pair <std::vector< std::string >, std::vector< int > > > nextWordProb;
 
 ////////////// PATTERN MATCHING ALGORITHMS //////////////
+// Algorithm 1
 std::vector<int> nieve (std::string, std::string);
-
+// Algorithm 2
 std::vector<int> calcJumpTable (std::string pat);
 std::vector<int> kml (std::string, std::string, std::vector<int>);
-
+// Algorithm 3
 std::map <char, int> calcDeltaTable (std::string);
 std::vector<int> bm (std::string, std::string, std::map<char, int>);
 
@@ -25,29 +30,162 @@ nextWordProb calcFile (std::string);
 void generateText (std::string, nextWordProb, unsigned long long int);
 
 ////////////  HELPER FUNCTIONS //////////////
-nextWordCount mapWord (nextWordCount, std::string, std::string);
-std::string randomKey (nextWordProb);
+nextWordCount mapWord (nextWordCount&, std::string, std::string);
+std::string randomKey (nextWordProb&);
 std::string findNext (nextWordProb, std::string);
 nextWordProb calcNextProb (nextWordCount nwc);
 std::string readFile (std::string filename);
+std::vector<std::string> fetchFiles (std::string);
+double benchmark (std::string txt, std::string pat, int algorithm);
+void writeFiles (std::string in, std::string out);
+void calcGroup (std::string txt, std::vector<std::string> pats, int algorithm, std::string file);
 void testAlgorithms (std::string txt, std::string pat);
 void printRes (std::vector<int>);
 void printStr (std::string res);
 
 int main() {
 
-  std::string inFile = "/Users/fred.christensen/Dropbox/school/Algorithms/string-matching/dna.txt";
-  std::string outFile = "/Users/fred.christensen/Dropbox/school/Algorithms/string-matching/new-dna.txt";
+  std::string dir = "/Users/fred.christensen/Dropbox/school/Algorithms/string-matching/";
+  std::string results_file (dir);
+  results_file.append("results.csv");
+  std::string inSP = "/Users/fred.christensen/Dropbox/school/Algorithms/string-matching/shakespear.txt";
+  std::string outSP = "/Users/fred.christensen/Dropbox/school/Algorithms/string-matching/sp";
+  std::string inDNA = "/Users/fred.christensen/Dropbox/school/Algorithms/string-matching/dna-original.txt";
+  std::string outDNA = "/Users/fred.christensen/Dropbox/school/Algorithms/string-matching/dna";
 
-  auto nwp = calcFile(inFile);
-  generateText(outFile, nwp, 4);
-
+/*
+  // Read from Files to create bias
+  std::thread t1 (writeFiles, inSP, outSP);
+  std::thread t2 (writeFiles, inDNA, outDNA);
+  t1.join();
+  t2.join();
   std::cout << "String Matching Comparisons\n";
   std::string txt = readFile(inFile);
   std::string pat = readFile(outFile);
   testAlgorithms(txt, pat);
+*/
 
+  /////////////////////////////////////////////////////////////////////////////////
+  // IMPERICAL STUDIES
+  /////////////////////////////////////////////////////////////////////////////////
+
+  std::vector<std::string> patterns = fetchFiles(outDNA);
+  std::string txt_file (dir);
+  txt_file.append("dna.txt");
+  std::ofstream fout (results_file);
+  fout.close();
+  std::ifstream fin (txt_file);
+  std::string txt, t;
+  while (fin >> t) {
+    txt.append(t);
+  }
+  while (patterns.size() > 0) {
+    std::vector<std::string> pats;
+    for (int i = 0; i < 30; ++i) {
+      pats.push_back(patterns.back());
+      patterns.pop_back();
+    }
+
+    std::thread t1 ([&] () {
+      calcGroup(txt, pats, 1, results_file);
+    });
+
+    std::thread t2 ([&] () {
+      calcGroup(txt, pats, 2, results_file);
+    });
+
+    std::thread t3 ([&] () {
+      calcGroup(txt, pats, 3, results_file);
+    });
+
+    t1.join();
+    t2.join();
+    t3.join();
+  }
+
+  std::cout << "\nAll Done Here\n";
   return 0;
+}
+
+std::vector<std::string> fetchFiles (std::string in) {
+  std::vector<std::string> res;
+  std::string substr = in.substr(66);
+  // loop through Pattern Size
+  for (int i = 2; i <= std::pow(2, 12); i *= 2) {
+    std::cout << "\nFetching pattern of size " << i << " for Bias " << substr << "\n";
+    // run 30 itoration for each pattern size (to get a statistically accurate result set)
+    for (int j = 1; j <= 30; ++j) {
+      std::string file (in);
+      file.append("/");
+      file.append(std::to_string(i));
+      file.append("-");
+      file.append(std::to_string(j));
+      file.append(".txt");
+      res.push_back(readFile(file));
+    }
+  }
+  return res;
+}
+
+void calcGroup (std::string txt, std::vector<std::string> pats, int algorithm, std::string file) {
+  std::vector<double> result_arr;
+  for (auto pat : pats) {
+    result_arr.push_back(benchmark(txt, pat, algorithm));
+  }
+  auto result = tools::average(result_arr);
+  std::ofstream fout (file, std::fstream::app);
+  {
+    std::lock_guard<std::mutex> lock(result_mutex);
+    fout << pats[0].size() << ", " << result << ", " << algorithm <<"\n";
+  }
+  fout.close();
+}
+
+// BENCHMARK
+double benchmark (std::string txt, std::string pat, int algorithm) {
+  if (algorithm == 1) {
+    return tools::funcTime([=] () {
+      nieve(txt, pat);
+    });
+  }
+
+  if (algorithm == 2) {
+    std::map <char, int> delta = calcDeltaTable(pat);
+    return tools::funcTime([=] () {
+      bm(txt, pat, delta);
+    });
+  }
+
+  if (algorithm == 3) {
+    std::vector<int> jumpTable = calcJumpTable(pat);
+    return tools::funcTime([=] () {
+      kml(txt, pat, jumpTable);
+    });
+  }
+  return 999999999999;
+}
+
+
+// Used to generate files to test from
+void writeFiles (std::string in, std::string out) {
+  std::string substr = in.substr(66);
+  std::cout << "\nCalculating Bias for " << substr << std::endl;
+  auto bias = calcFile(in);
+  for (int i = 2; i <= std::pow(2, 12); i *= 2) {
+    std::cout << "\nGenerating Strings of Size " << i << " for Bias " << substr << "\n";
+    for (int j = 1; j <= 30; ++j) {
+      std::string file (out);
+      file.append("/");
+      file.append(std::to_string(i));
+      file.append("-");
+      file.append(std::to_string(j));
+      file.append(".txt");
+      generateText(file, bias, i);
+    }
+  }
+  out.append(".txt");
+  std::cout << "\nGenerating text for Bias " << substr << "\n";
+  generateText(out, bias, std::pow(2, 25));
 }
 
 std::string readFile (std::string filename) {
@@ -147,7 +285,7 @@ std::vector<int> kml (std::string text, std::string pat, std::vector<int> jumpTa
       cur = jumpTable[cur];
     }
 
-    if(pat[cur] == text[i]){
+    if(pat[cur] == text[i]) {
       if(++cur == pat.size()) {
         res.push_back(i - pat.size() +1);
         cur = 0;
@@ -174,7 +312,7 @@ std::vector<int> bm (std::string text, std::string pat, std::map<char, int> delt
   std::vector<int> results;
   for (int i = 0; i <= text.size() - pat.size(); ++i) {
     int j = pat.size() -1;
-    for (; j >= 0 && pat[j] == text[i+j];--j){
+    for (; j >= 0 && pat[j] == text[i+j];--j) {
       if (j == 0) {
         results.push_back(i);
       }
@@ -201,8 +339,7 @@ std::vector<int> bm (std::string text, std::string pat, std::map<char, int> delt
 //    return probability map
 
 // TODO: send 'nextWordCount' via a shared_ptr instead of pass it in and return it
-nextWordCount mapWord (nextWordCount p, std::string key, std::string value) {
-  std::cout << "Mapping KEY: " << key << " to VALUE: " << value << "\n";
+nextWordCount mapWord (nextWordCount& p, std::string key, std::string value) {
   if (p.count(key)) {
     if (p[key].count(value)) {
       ++p[key][value];
@@ -227,9 +364,10 @@ nextWordProb calcFile (std::string filename) {
   nextWordCount nwc;
 
   fin >> cur;
-  while (fin >> next) {
     nwc = mapWord(nwc, cur, next);
+  while (fin >> next) {
     cur = next;
+    nwc = mapWord(nwc, cur, next);
   }
 
   nextWordProb nwp = calcNextProb(nwc);
@@ -246,7 +384,7 @@ nextWordProb calcFile (std::string filename) {
 //    write(cur)
 //    cur = next;
 
-std::string randomKey (nextWordProb nwp) {
+std::string randomKey (nextWordProb& nwp) {
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_int_distribution<> dis(0, nwp.size() -1);
